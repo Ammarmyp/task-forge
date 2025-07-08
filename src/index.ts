@@ -1,20 +1,16 @@
 import { Hono } from "hono";
 import { serve } from "@hono/node-server";
+import "dotenv/config";
+import Routes from "./routes";
 
 const app = new Hono();
 
 app.get("/", (c) => {
-  return c.text("Hello Hono! task forge running");
+  return c.text("Hello Hono! task forge running using it porperly");
 });
 
-serve(
-  {
-    fetch: app.fetch,
-    port: 3000,
-  },
-  () => {
-    console.log("task forge running");
-  }
-);
+app.route("/auth", Routes.userAuthRoutes);
+
+serve(app);
 
 export default app;
