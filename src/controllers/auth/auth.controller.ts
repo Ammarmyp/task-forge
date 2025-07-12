@@ -2,8 +2,18 @@ import { Context } from "hono";
 import { LoginSchema, NewUserSchema } from "../../utils/validation-schema";
 import { db } from "../../../prisma/client";
 import { comparePassword, hashPassword } from "../../utils/hash";
-import { signAccessToken, signRefreshToken } from "../../utils/jwt";
-import { setCookie } from "hono/cookie";
+import {
+  signAccessToken,
+  signRefreshToken,
+  verifyToken,
+} from "../../utils/jwt";
+import { getCookie, setCookie } from "hono/cookie";
+import { env } from "../../utils/env";
+
+const enum TOKENS {
+  REFRESH_TOKEN = "refresh_token",
+  ACCESS_TOKEN = "access_token",
+}
 
 export const signup = async (c: Context) => {
   try {
@@ -61,7 +71,7 @@ export const login = async (c: Context) => {
     });
 
     // setting both tokens as http only cookies for secuirity
-    setCookie(c, "access_token", accessToken, {
+    setCookie(c, TOKENS.ACCESS_TOKEN, accessToken, {
       httpOnly: true,
       secure: true,
       sameSite: "strict",
@@ -69,7 +79,7 @@ export const login = async (c: Context) => {
       maxAge: 60 * 15,
     });
 
-    setCookie(c, "refresh_token", refreshToken, {
+    setCookie(c, TOKENS.REFRESH_TOKEN, refreshToken, {
       httpOnly: true,
       secure: true,
       sameSite: "strict",
@@ -87,5 +97,40 @@ export const login = async (c: Context) => {
     });
   } catch (error) {
     return c.json({ error, message: "Something went wrong" }, 500);
+  }
+};
+
+export const refreshHandler = async (c: Context) => {
+  try {
+    const refreshToken = getCookie(c, TOKENS.REFRESH_TOKEN);
+    if (!refreshToken) return c.json({ message: "No refresh token" }, 401);
+
+    try {
+      const decodedToken = await verifyToken(refreshToken, env.REFRESH_SECRET);
+      if (decodedToken?.role !== "REFRESH")
+        return c.json({ message: "Invalid token type " }, 403);
+
+      const session = await db.session.findUnique({
+        where: { refreshToken },
+      });
+      if (!session || session.expiresAt < new Date()) {
+        return c.json({ message: "Token is either expired or invalid" }, 403);
+      }
+      const newAccessToken = await signAccessToken(decodedToken.sub);
+
+      setCookie(c, TOKENS.ACCESS_TOKEN, newAccessToken, {
+        httpOnly: true,
+        secure: true,
+        sameSite: "strict",
+        path: "/",
+        maxAge: 60 * 15,
+      });
+
+      return c.json({ message: "Access Token refreshed" });
+    } catch (error) {
+      return c.json({ error, message: "something went wrong!" });
+    }
+  } catch (error) {
+    return c.json({ error, message: "something went wrong!" });
   }
 };

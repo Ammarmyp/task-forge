@@ -27,10 +27,11 @@ export const signRefreshToken = async (userId: string) => {
 };
 
 export const verifyToken = async (
-  token: string
-): Promise<{ userId: string } | null> => {
+  token: string,
+  secret: string
+): Promise<TokenPayloadType | null> => {
   try {
-    return (await verify(token, env.ACCESS_SECRET)) as { userId: string };
+    return (await verify(token, secret)) as TokenPayloadType;
   } catch {
     return null;
   }
