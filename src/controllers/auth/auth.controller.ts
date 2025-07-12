@@ -2,7 +2,8 @@ import { Context } from "hono";
 import { LoginSchema, NewUserSchema } from "../../utils/validation-schema";
 import { db } from "../../../prisma/client";
 import { comparePassword, hashPassword } from "../../utils/hash";
-import { signToken } from "../../utils/jwt";
+import { signAccessToken, signRefreshToken } from "../../utils/jwt";
+import { setCookie } from "hono/cookie";
 
 export const signup = async (c: Context) => {
   try {
@@ -23,7 +24,7 @@ export const signup = async (c: Context) => {
       },
     });
 
-    const token = await signToken(user.id);
+    const token = await signAccessToken(user.id);
 
     return c.json({
       success: true,
@@ -45,16 +46,44 @@ export const login = async (c: Context) => {
     const { email, password } = parsed.data;
 
     const user = await db.user.findUnique({ where: { email } });
-    if (!user) return c.json({ error: "Invalid credentials" }, 401);
+    if (!user || !(await comparePassword(password, user.password)))
+      return c.json({ error: "Invalid credentials" }, 401);
 
-    const isValid = await comparePassword(password, user.password);
-    if (!isValid) return c.json({ error: "Invalid credentials" }, 401);
+    const accessToken = await signAccessToken(user.id);
+    const refreshToken = await signRefreshToken(user.id);
 
-    const token = await signToken(user.id);
+    await db.session.create({
+      data: {
+        userId: user.id,
+        refreshToken,
+        expiresAt: new Date(Date.now() + 1000 * 60 * 60 * 24 * 7),
+      },
+    });
+
+    // setting both tokens as http only cookies for secuirity
+    setCookie(c, "access_token", accessToken, {
+      httpOnly: true,
+      secure: true,
+      sameSite: "strict",
+      path: "/",
+      maxAge: 60 * 15,
+    });
+
+    setCookie(c, "refresh_token", refreshToken, {
+      httpOnly: true,
+      secure: true,
+      sameSite: "strict",
+      path: "/",
+      maxAge: 60 * 60 * 24 * 7, // 7 days
+    });
     return c.json({
       success: true,
-      token,
-      user: { id: user.id, email: user.email, createdAt: user.createdAt },
+      accessToken,
+      user: {
+        id: user.id,
+        email: user.email,
+        createdAt: user.createdAt,
+      },
     });
   } catch (error) {
     return c.json({ error, message: "Something went wrong" }, 500);
